@@ -1,0 +1,14 @@
+name: serpens
+dependencies:
+  - python
+  - numpy
+  - scipy
+  - astropy
+  - matplotlib
+  - dustmaps
+  - astroquery
+  - pysynphot
+  - mpl_toolkits
+  - logging
+  - jwst
+  - mirage
