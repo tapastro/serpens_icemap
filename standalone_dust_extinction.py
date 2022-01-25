@@ -1,11 +1,12 @@
-import pysynphot as S
-import astropy.units as u
 import numpy as np
 from astropy.io import ascii
 from astropy.coordinates import SkyCoord
 from matplotlib import pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.collections import PatchCollection
+from synphot import SpectralElement, Observation
+import stsynphot as stsyn
+import astropy.units as u
 from scipy import constants as con
 from dustmaps.sfd import SFDQuery
 from matplotlib import cm as cm
@@ -32,7 +33,7 @@ log.setLevel(logging.DEBUG)
 # This block sets parameter values, initializes bandpasses
 # and defines utility functions.
 #######
-output_filename = 'apt_sample_serpens_field_add_all_k2v.tbl'
+output_filename = 'output/apt_sample_serpens_field_add_all_k2v.tbl'
 
 CK_modelfile = 'params/ckmodels.txt'
 dense_extcurve_file = 'params/chapman09_extinction.asc'
@@ -41,6 +42,8 @@ diffuse_extcurve_file = 'params/kext_albedo_WD_MW_3.1_60_D03.all'
 r_v_dense = 5.0
 r_v_foreground = 3.1
 AU = con.au
+# HC in units of Angstrom * erg
+HC = con.h * con.c * 1.e17
 
 # From Pontoppidan et al. 2004, use fig10 to find N_H/A_J relation
 # => 1.e23 cm^-2/30 A_J => 3.33e21 cm^-2/A_J  => 3.33e25 m^-2/A_J
@@ -62,11 +65,11 @@ def load_bandpass_dict():
     bandpasses to be listed in arrays and outputs."""
     bpdict = dict()
 
-    bpdict["V"] = S.ObsBandpass('v')
-    bpdict["J"] = S.FileBandpass('params/bp_2mass_j_scaled.tbl')
-    bpdict["H"] = S.FileBandpass('params/bp_2mass_h_scaled.tbl')
-    bpdict["K"] = S.FileBandpass('params/bp_2mass_k_scaled.tbl')
-    bpdict["IRAC1"] = S.FileBandpass('params/irac_3p6um_filter.tbl')
+    bpdict["V"] = SpectralElement.from_filter('johnson_v')
+    bpdict["J"] = SpectralElement.from_file('params/bp_2mass_j_scaled.tbl')
+    bpdict["H"] = SpectralElement.from_file('params/bp_2mass_h_scaled.tbl')
+    bpdict["K"] = SpectralElement.from_file('params/bp_2mass_k_scaled.tbl')
+    bpdict["IRAC1"] = SpectralElement.from_file('params/irac_3p6um_filter.tbl')
     bporder = ["V", "J", "H", "K", "IRAC1"]
 
     return bpdict, bporder
@@ -98,11 +101,11 @@ def flux_to_mag(spwv, spflx, bp, zeromagflx=None):
     provide result in magnitudes if zero-mag
     flux provided, otherwise provide flux
     """
-    bp_spwv = np.interp(spwv, bp.wave, bp.throughput)
+    bp_spwv = np.interp(spwv, bp.waveset.value, bp(bp.waveset))
     jobs = spflx * bp_spwv
-    jredeff = np.trapz(jobs * S.units.HC/spwv, x=spwv)
-    jresponse = np.trapz(bp.throughput * S.units.HC / bp.wave, x=bp.wave)
-    jflx = jredeff / jresponse
+    jredeff = np.trapz(jobs * HC / spwv, x=spwv)
+    jresponse = np.trapz(bp(bp.waveset) * HC / bp.waveset.value, x=bp.waveset.value)
+    jflx = (jredeff / jresponse).value
     if zeromagflx is not None:
         return -2.5 * np.log10(jflx / zeromagflx)
     else:
@@ -134,13 +137,15 @@ def filter_extinction(wav, ext, bandpass_dict):
     wav = wav * 1.e4
     ext_response = dict()
     for key in bandpass_dict:
-        bp_interp = np.interp(wav, bandpass_dict[key].wave, bandpass_dict[key].throughput)
+        bp_interp = np.interp(wav, bandpass_dict[key].waveset.value,
+                              bandpass_dict[key](bandpass_dict[key].waveset))
         jobs = ext * bp_interp
-        jredeff = np.trapz(jobs * S.units.HC / wav, x=wav)
-        jresponse = np.trapz(bandpass_dict[key].throughput * S.units.HC /
-                             bandpass_dict[key].wave, x=bandpass_dict[key].wave)
+        jredeff = np.trapz(jobs * HC / wav, x=wav)
+        jresponse = np.trapz(bandpass_dict[key](bandpass_dict[key].waveset) *
+                             HC / bandpass_dict[key].waveset.value,
+                             x=bandpass_dict[key].waveset.value)
         ext_response[key] = jredeff / jresponse
-    return {i: ext_response[i]/ext_response["V"] for i in ext_response.keys()}
+    return {i: (ext_response[i] / ext_response["V"]).value for i in ext_response.keys()}
 
 
 def translate_in_galactic(coord, position_angle, separation):
@@ -209,8 +214,8 @@ def load_ck_models(modelfile):
 
     modeldict = {}
     for line in cklist:
-        tmp = S.Icat('ck04models', float(line[1]), 0.0, float(line[2]))
-        if tmp.integrate() > 0.:
+        tmp = stsyn.grid_to_spec('ck04models', float(line[1]), 0.0, float(line[2]))
+        if tmp.integrate().value > 0.:
             modeldict[line[0]] = tmp
 
     return modeldict
@@ -227,9 +232,9 @@ def gen_2MASS_colordict(sourcedict, bpdict, zpdict, extinctions):
     for source in sourcedict.keys():
         mags = dict()
         for key in bpdict.keys():
-            obs = S.Observation(sourcedict[source], bpdict[key])
-            flx = obs.effstim('flam')
-            mags[key] = -2.5 * np.log10(flx / zpdict[key]) + extinctions[key]
+            obs = Observation(sourcedict[source], bpdict[key])
+            flx = obs.effstim(flux_unit='flam')
+            mags[key] = -2.5 * np.log10(flx.value / zpdict[key]) + extinctions[key]
         colordict[source] = [mags["J"] - mags["H"], mags["H"] - mags["K"], mags["J"] - mags["K"]]
     return colordict
 
@@ -282,8 +287,8 @@ def observe_model(model, coord, kmag_observed, bandpass_key):
     foreground_Av = foreground_extinction(coord)
     diffuse_extinction_mags = {key: foreground_Av * filter_extinctions_wd[key] for key in filter_extinctions_wd.keys()}
     base_k = kmag_observed - diffuse_extinction_mags["K"]
-    renormed = model.renorm(base_k, 'vegamag', band=bp_dict["K"])
-    base_bp = flux_to_mag(renormed.wave, renormed.flux, bp_dict[bandpass_key], zp_dict[bandpass_key])
+    renormed = model.normalize(base_k * u.ABmag, band=bp_dict["K"])
+    base_bp = flux_to_mag(renormed.waveset.value, renormed(renormed.waveset).value, bp_dict[bandpass_key], zp_dict[bandpass_key])
     return base_bp
 
 
