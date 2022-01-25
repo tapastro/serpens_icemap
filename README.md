@@ -9,9 +9,13 @@ Implementation of MIRAGE for simulating our NIRCam pre-imaging data is underway 
 After cloning this repo, it would be easiest to creat a new conda environment using the included environment.yml file:
 
 ```
-conda env create -f environment.yml
+conda env create --file environment.yml
 ```
 
-This should create an environment named `serpens` which should support the running of this code.
+This will create an environment named `serpens` which should support the running of this code. Enter this environment with `conda activate serpens`.
 
 Next, you'll need to run `python dustmaps_config.py` to download the Schlegel, Finkbeiner and Davis dust map for use as a foreground extinction estimator.
+
+Finally, there may be some configuration required for synphot and stsynphot. You can follow the documentation provided by those packages, but the key details are to set the environment variable `PYSYN_CDBS`, then retrieve the Castelli-Kurucz stellar models, as well as default calibration files.
+
+
